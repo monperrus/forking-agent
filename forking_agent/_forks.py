@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from agentknit import Tool
 
-from ._worktree import create_fork_worktree
+from ._worktree import commit_fork, create_fork_worktree
 
 # runner(task, tools, system_prompt_supplement) -> final reply text
 Runner = Callable[[str, "list[Tool]", str], str]
@@ -34,6 +34,7 @@ class ForkResult:
     path: Path
     branch: str
     reply: str
+    commit: str | None  # sha of the fork's final commit on `branch`, None if nothing changed
 
 
 class ForkManager:
@@ -52,12 +53,7 @@ class ForkManager:
 
     # -- tool factory ------------------------------------------------------
     def tools_for(self, agent_id: str, workdir: Path, depth: int) -> list[Tool]:
-        """Tools bound to one agent's worktree.
-
-        agentknit keys its global tool library by function name, so each
-        callable is renamed uniquely per agent to avoid cross-fork clashes.
-        """
-        tag = agent_id.replace("-", "_").replace(".", "_")
+        """Tools bound to one agent's worktree."""
 
         def bash(command: str) -> tuple[str, dict]:
             r = subprocess.run(command, shell=True, cwd=workdir, capture_output=True,
@@ -95,13 +91,11 @@ class ForkManager:
         ]
         tools = []
         for fn, desc, props in specs:
-            name = fn.__name__
-            fn.__name__ = f"{name}_{tag}"
             params: dict[str, object] = {"type": "object",
                       "properties": {k: {"type": "string", "description": v}
                                      for k, v in props.items()},
                       "required": list(props)}
-            tools.append(Tool(name, desc, fn, parameters=params))
+            tools.append(Tool(fn.__name__, desc, fn, parameters=params))
         return tools
 
     # -- forking -----------------------------------------------------------
@@ -130,7 +124,8 @@ class ForkManager:
             reply = self.runner(task, tools, SYSTEM)
         except Exception as e:  # noqa: BLE001 - a failed branch is a result, not a crash
             reply = f"ERROR: fork crashed: {e!r}"
-        return ForkResult(fid, idea, dest, branch, reply)
+        commit = commit_fork(dest, f"fork {fid}: {idea}\n\n{reply}")
+        return ForkResult(fid, idea, dest, branch, reply, commit)
 
     def wait(self, parent_id: str) -> str:
         ids = list(self._children.get(parent_id, []))
@@ -139,7 +134,8 @@ class ForkManager:
         parts = []
         for fid in ids:
             r = self._futures[fid].result()
-            parts.append(f"## {r.fork_id}: {r.idea}\nworktree: {r.path}  branch: {r.branch}\n{r.reply}")
+            parts.append(f"## {r.fork_id}: {r.idea}\nworktree: {r.path}  branch: {r.branch}"
+                         f"  commit: {r.commit or 'none (no changes)'}\n{r.reply}")
         return "\n\n".join(parts)
 
     def results(self) -> list[ForkResult]:

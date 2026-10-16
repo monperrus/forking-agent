@@ -62,7 +62,36 @@ def test_fork_runs_children_in_parallel_and_wait_collects(repo: Path) -> None:
     assert "done do A" in report and "done do B" in report
     assert set(seen.values()) == {"uncommitted\n"}
     assert not (repo / "out.txt").exists()               # parent isolated from forks
-    assert len(mgr.results()) == 2
+    results = mgr.results()
+    assert len(results) == 2
+    for r in results:                                    # each fork committed on its branch
+        assert r.commit and git(repo, "rev-parse", r.branch).strip() == r.commit
+        files = git(repo, "show", "--name-only", "--format=", r.branch).split()
+        assert set(files) == {"out.txt", "wip.txt"}
+        assert git(repo, "show", f"{r.branch}:out.txt").startswith("You are fork")
+
+
+def test_cli_json_stdout_is_pure_json(repo: Path, monkeypatch, capsys) -> None:
+    import json
+
+    from forking_agent import _cli
+
+    def runner(task, tools, system):
+        print("agentknit progress noise")
+        return "final"
+
+    monkeypatch.setattr(_cli, "agentknit_runner", lambda model, endpoint: runner)
+    assert _cli.main(["task", "--repo", str(repo), "--json"]) == 0
+    out = capsys.readouterr()
+    assert json.loads(out.out) == {"reply": "final", "forks": []}
+    assert "noise" in out.err
+
+
+def test_commit_fork_returns_none_without_changes(repo: Path, tmp_path: Path) -> None:
+    from forking_agent._worktree import commit_fork
+
+    dest = create_fork_worktree(repo, tmp_path / "wt", "fork/clean")
+    assert commit_fork(dest, "nothing") is None
 
 
 def test_depth_limit_and_crash_isolation(repo: Path) -> None:

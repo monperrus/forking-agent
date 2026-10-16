@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -25,11 +26,13 @@ def main(argv: list[str] | None = None) -> int:
 
     mgr = ForkManager(Path(a.repo), agentknit_runner(a.model, a.endpoint),
                       max_depth=a.max_depth)
-    reply = mgr.start(a.task)
+    # agentknit prints progress on stdout; keep stdout for the result only
+    with contextlib.redirect_stdout(sys.stderr):
+        reply = mgr.start(a.task)
     if a.json:
         json.dump({"reply": reply,
                    "forks": [{"id": r.fork_id, "idea": r.idea, "path": str(r.path),
-                              "branch": r.branch, "reply": r.reply}
+                              "branch": r.branch, "commit": r.commit, "reply": r.reply}
                              for r in mgr.results()]}, sys.stdout, indent=2)
         print()
     else:
