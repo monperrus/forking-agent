@@ -191,12 +191,16 @@ def test_nested_adoption_folds_the_tree(repo: Path) -> None:
             assert t["adopt_fork"]("f1.2")[1]["result"] == "ok"
             return "mid done"
         t["write_file"]("leaf.txt", "leaf\n")
+        t["bash"]("git add -A && git commit -qm leaf")  # nothing left for commit_fork
         return "leaf done"
 
     mgr = ForkManager(repo, runner)
     mgr.start("root")
     assert mgr.root is not None
     assert git(mgr.root.path, "blame", "--porcelain", "leaf.txt").count(f"author {ident('f1.2')}") == 1
+    # a fork that committed everything itself still reports its tip
+    leaf = next(r for r in mgr.results() if r.fork_id == "f1.2")
+    assert leaf.commit == git(repo, "rev-parse", leaf.branch).strip() != leaf.base
 
 
 def test_two_runs_on_one_repo_do_not_collide(repo: Path) -> None:

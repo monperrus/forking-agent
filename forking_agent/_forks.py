@@ -41,7 +41,7 @@ class ForkResult:
     path: Path
     branch: str
     reply: str
-    commit: str | None  # sha of the fork's final commit on `branch`, None if nothing changed
+    commit: str | None  # tip of `branch` when the fork ended, None if it made no commit past `base`
     base: str = ""      # snapshot of the inherited state; the fork's own work is base..branch
 
 
@@ -160,9 +160,10 @@ class ForkManager:
         """Run the root agent in its own worktree and return its final reply."""
         dest, branch, base = self._worktree_for("root", "operator", self.repo)
         reply = self.runner(task, self.tools_for("root", dest, 0), SYSTEM)
-        commit = commit_fork(dest, "root", f"root: final state\n\n{reply}")
+        commit_fork(dest, "root", f"root: final state\n\n{reply}")
+        tip = head(dest)
         self.root = ForkResult("root", task.splitlines()[0] if task else "", dest, branch,
-                               reply, commit, base)
+                               reply, tip if tip != base else None, base)
         return reply
 
     def fork(self, parent_id: str, parent_dir: Path, idea: str, prompt: str,
@@ -183,8 +184,9 @@ class ForkManager:
             reply = self.runner(task, tools, SYSTEM)
         except Exception as e:  # noqa: BLE001 - a failed branch is a result, not a crash
             reply = f"ERROR: fork crashed: {e!r}"
-        commit = commit_fork(dest, fid, f"fork {fid}: {idea}\n\n{reply}")
-        return ForkResult(fid, idea, dest, branch, reply, commit, base)
+        commit_fork(dest, fid, f"fork {fid}: {idea}\n\n{reply}")
+        tip = head(dest)  # the agent may have committed everything itself
+        return ForkResult(fid, idea, dest, branch, reply, tip if tip != base else None, base)
 
     def _finished_child(self, parent_id: str, fork_id: str) -> ForkResult | str:
         """The result of *parent_id*'s own fork *fork_id*, or an error message."""
