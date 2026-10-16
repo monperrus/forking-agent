@@ -8,7 +8,7 @@ import json
 import sys
 from pathlib import Path
 
-from ._forks import ForkManager, agentknit_runner
+from ._forks import ForkManager, ForkResult, agentknit_runner
 
 DEFAULT_MODEL = "glm-5.3-flash"
 DEFAULT_ENDPOINT = "run:///home/martin/bin/zai-glm-5.3-flash-completions.py"
@@ -29,14 +29,19 @@ def main(argv: list[str] | None = None) -> int:
     # agentknit prints progress on stdout; keep stdout for the result only
     with contextlib.redirect_stdout(sys.stderr):
         reply = mgr.start(a.task)
+    def as_dict(r: ForkResult) -> dict[str, object]:
+        return {"id": r.fork_id, "idea": r.idea, "path": str(r.path), "branch": r.branch,
+                "base": r.base, "commit": r.commit, "reply": r.reply}
+
     if a.json:
-        json.dump({"reply": reply,
-                   "forks": [{"id": r.fork_id, "idea": r.idea, "path": str(r.path),
-                              "branch": r.branch, "commit": r.commit, "reply": r.reply}
-                             for r in mgr.results()]}, sys.stdout, indent=2)
+        assert mgr.root is not None
+        json.dump({"reply": reply, "root": as_dict(mgr.root),
+                   "forks": [as_dict(r) for r in mgr.results()]}, sys.stdout, indent=2)
         print()
     else:
         print(reply)
+        if mgr.root is not None:
+            print(f"\nresult branch: {mgr.root.branch} (merge it yourself: git merge {mgr.root.branch})")
     return 0
 
 

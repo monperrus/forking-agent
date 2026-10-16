@@ -27,12 +27,15 @@ def _git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> str:
     return r.stdout
 
 
-def create_fork_worktree(source: Path, dest: Path, branch: str) -> Path:
+def create_fork_worktree(source: Path, dest: Path, branch: str,
+                         parent_id: str = "operator") -> Path:
     """Create worktree *dest* on new *branch* mirroring *source*'s current state.
 
     The worktree starts at *source*'s HEAD, then modified, deleted and untracked
     (non-ignored) files are copied over, so the fork sees exactly what the
-    parent sees.  Nothing is committed in the fork.
+    parent sees.  That inherited state is committed as one snapshot commit
+    authored by *parent_id*, so ``HEAD`` of the new worktree is the base of
+    the fork's own work (``base..branch``).
     """
     source, dest = Path(source).resolve(), Path(dest).resolve()
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -48,17 +51,48 @@ def create_fork_worktree(source: Path, dest: Path, branch: str) -> Path:
             shutil.copy2(src, dst, follow_symlinks=False)
         elif not src.exists() and (dst.exists() or dst.is_symlink()):
             dst.unlink()
+    commit_fork(dest, parent_id, f"snapshot of {parent_id}'s working state for {branch}")
     return dest
 
 
-def commit_fork(worktree: Path, agent_id: str, message: str) -> str | None:
-    """Commit everything (non-ignored) in *worktree*; return the sha, None if no change.
+def head(worktree: Path) -> str:
+    return _git(worktree, "rev-parse", "HEAD").strip()
 
-    The commit includes the state inherited from the parent's uncommitted
-    files, so the branch alone reproduces what the fork saw and produced.
-    """
+
+def commit_fork(worktree: Path, agent_id: str, message: str) -> str | None:
+    """Commit everything (non-ignored) in *worktree*; return the sha, None if no change."""
     _git(worktree, "add", "-A")
     if not _git(worktree, "status", "--porcelain").strip():
         return None
     _git(worktree, "commit", "-q", "--no-verify", "-m", message, env=git_identity(agent_id))
-    return _git(worktree, "rev-parse", "HEAD").strip()
+    return head(worktree)
+
+
+def diff(worktree: Path, base: str, tip: str, *, stat: bool = False) -> str:
+    """``git diff base tip`` (``--stat`` if *stat*); branches are shared by all worktrees."""
+    return _git(worktree, "diff", *(["--stat"] if stat else []), base, tip)
+
+
+def merge_in_progress(worktree: Path) -> bool:
+    r = subprocess.run(["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], cwd=worktree,
+                       capture_output=True, check=False)
+    return r.returncode == 0
+
+
+def merge_fork(worktree: Path, branch: str, agent_id: str, message: str) -> list[str]:
+    """Merge *branch* into *worktree* as *agent_id*; return conflicted paths ([] if clean).
+
+    Pending changes are first committed as a checkpoint, so the merge never
+    touches uncommitted work.  On conflict the merge is left in progress for
+    the agent to resolve and commit.
+    """
+    commit_fork(worktree, agent_id, f"checkpoint before merging {branch}")
+    r = subprocess.run(["git", "merge", "--no-ff", "--no-edit", "-m", message, branch],
+                       cwd=worktree, capture_output=True, text=True, check=False,
+                       env={**os.environ, **git_identity(agent_id)})
+    if r.returncode == 0:
+        return []
+    conflicted = _git(worktree, "diff", "--name-only", "--diff-filter=U").split()
+    if not conflicted:
+        raise RuntimeError(f"git merge {branch} failed in {worktree}: {r.stderr.strip()}")
+    return conflicted
