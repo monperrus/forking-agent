@@ -2,14 +2,26 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
 
 
-def _git(cwd: Path, *args: str) -> str:
+def git_identity(agent_id: str) -> dict[str, str]:
+    """Environment that makes git author and commit as agent *agent_id*.
+
+    Every commit made in a fork, by the agent itself or by :func:`commit_fork`,
+    then names the fork that produced it.
+    """
+    name, email = f"forking-agent {agent_id}", f"{agent_id}@forking-agent.invalid"
+    return {"GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email,
+            "GIT_COMMITTER_NAME": name, "GIT_COMMITTER_EMAIL": email}
+
+
+def _git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> str:
     r = subprocess.run(["git", *args], check=False, cwd=cwd, capture_output=True,
-                       text=True)
+                       text=True, env={**os.environ, **env} if env else None)
     if r.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed in {cwd}: {r.stderr.strip()}")
     return r.stdout
@@ -39,7 +51,7 @@ def create_fork_worktree(source: Path, dest: Path, branch: str) -> Path:
     return dest
 
 
-def commit_fork(worktree: Path, message: str) -> str | None:
+def commit_fork(worktree: Path, agent_id: str, message: str) -> str | None:
     """Commit everything (non-ignored) in *worktree*; return the sha, None if no change.
 
     The commit includes the state inherited from the parent's uncommitted
@@ -48,6 +60,5 @@ def commit_fork(worktree: Path, message: str) -> str | None:
     _git(worktree, "add", "-A")
     if not _git(worktree, "status", "--porcelain").strip():
         return None
-    _git(worktree, "-c", "user.name=forking-agent", "-c", "user.email=forking-agent@localhost",
-         "commit", "-q", "--no-verify", "-m", message)
+    _git(worktree, "commit", "-q", "--no-verify", "-m", message, env=git_identity(agent_id))
     return _git(worktree, "rev-parse", "HEAD").strip()

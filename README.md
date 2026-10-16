@@ -7,7 +7,9 @@ When the agent faces real alternatives it calls the `fork(idea, prompt)` tool. E
 - gets its own git worktree (`<repo>-forks/<id>`, branch `fork/<id>`) holding the parent's current state, uncommitted and untracked files included (ignored files are not copied);
 - runs a child agent in parallel on `prompt`;
 - can fork again, up to `--max-depth`;
-- when done, commits everything in its worktree on `fork/<id>` (author `forking-agent`), message = idea + final report. The inherited uncommitted state is part of that commit, so the branch alone reproduces the fork.
+- when done, commits everything in its worktree on `fork/<id>`, message = idea + final report. The inherited uncommitted state is part of that commit, so the branch alone reproduces the fork.
+
+Provenance: every agent's `bash` runs with git author and committer `forking-agent <id> <<id>@forking-agent.invalid>` (`root` for the top agent), so each commit, whether the agent's own or the final one, names the fork that made it.
 
 Merging results and branches back is not done: each alternative stays on its branch.
 

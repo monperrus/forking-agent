@@ -54,6 +54,8 @@ def test_fork_runs_children_in_parallel_and_wait_collects(repo: Path) -> None:
             t["fork"]("B", "do B")
             return t["wait_forks"]()[0]
         seen[task] = t["read_file"]("wip.txt")[0]       # child sees uncommitted file
+        t["write_file"]("own.txt", "agent commit")
+        t["bash"]("git add own.txt && git commit -qm own")  # agent commits itself
         t["write_file"]("out.txt", task)
         return f"done {task.splitlines()[-1]}"
 
@@ -69,6 +71,10 @@ def test_fork_runs_children_in_parallel_and_wait_collects(repo: Path) -> None:
         files = git(repo, "show", "--name-only", "--format=", r.branch).split()
         assert set(files) == {"out.txt", "wip.txt"}
         assert git(repo, "show", f"{r.branch}:out.txt").startswith("You are fork")
+        # provenance: both the agent's own commit and the final one name the fork
+        idents = git(repo, "log", "--format=%an <%ae>|%cn", f"main..{r.branch}").split("\n")
+        expected = f"forking-agent {r.fork_id} <{r.fork_id}@forking-agent.invalid>|forking-agent {r.fork_id}"
+        assert [i for i in idents if i] == [expected, expected]
 
 
 def test_cli_json_stdout_is_pure_json(repo: Path, monkeypatch, capsys) -> None:
@@ -91,7 +97,7 @@ def test_commit_fork_returns_none_without_changes(repo: Path, tmp_path: Path) ->
     from forking_agent._worktree import commit_fork
 
     dest = create_fork_worktree(repo, tmp_path / "wt", "fork/clean")
-    assert commit_fork(dest, "nothing") is None
+    assert commit_fork(dest, "clean", "nothing") is None
 
 
 def test_depth_limit_and_crash_isolation(repo: Path) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import os
 import subprocess
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -12,7 +13,7 @@ from typing import Any, Callable
 
 from agentknit import Tool
 
-from ._worktree import commit_fork, create_fork_worktree
+from ._worktree import commit_fork, create_fork_worktree, git_identity
 
 # runner(task, tools, system_prompt_supplement) -> final reply text
 Runner = Callable[[str, "list[Tool]", str], str]
@@ -54,10 +55,11 @@ class ForkManager:
     # -- tool factory ------------------------------------------------------
     def tools_for(self, agent_id: str, workdir: Path, depth: int) -> list[Tool]:
         """Tools bound to one agent's worktree."""
+        env = {**os.environ, **git_identity(agent_id)}
 
         def bash(command: str) -> tuple[str, dict]:
             r = subprocess.run(command, shell=True, cwd=workdir, capture_output=True,
-                               text=True, timeout=600)
+                               text=True, timeout=600, env=env)
             out = (r.stdout + r.stderr)[-20000:]
             return f"exit={r.returncode}\n{out}", {"result": "ok" if r.returncode == 0 else "error"}
 
@@ -124,7 +126,7 @@ class ForkManager:
             reply = self.runner(task, tools, SYSTEM)
         except Exception as e:  # noqa: BLE001 - a failed branch is a result, not a crash
             reply = f"ERROR: fork crashed: {e!r}"
-        commit = commit_fork(dest, f"fork {fid}: {idea}\n\n{reply}")
+        commit = commit_fork(dest, fid, f"fork {fid}: {idea}\n\n{reply}")
         return ForkResult(fid, idea, dest, branch, reply, commit)
 
     def wait(self, parent_id: str) -> str:
